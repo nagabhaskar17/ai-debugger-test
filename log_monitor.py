@@ -32,15 +32,27 @@ def monitor_log_file(file_path):
 def debug_and_notify_slack(error_message):
     """Debug the error and notify Slack."""
     try:
-        match = re.search(r'File "(.*?)", line (\d+), in (\w+)', error_message)
-        if match:
-            file_path, line_number, method_name = match.groups()
+        matches = re.findall(r'File "(.*?)", line (\d+), in (\w+)', error_message)
+        if matches:
+            # Select the last match
+            file_path, line_number, method_name = matches[-1]
             line_number = int(line_number)
 
             # Read the specific method code as text
             with open(file_path, 'r') as file:
                 lines = file.readlines()
-                method_code = ''.join(lines[line_number - 5:line_number + 3])  # Adjust range as needed
+
+                # Find the start of the method
+                start_line = line_number - 1
+                while start_line > 0 and not lines[start_line].strip().startswith(('def', 'async', '@')):
+                    start_line -= 1
+
+                # Find the end of the method
+                end_line = line_number - 1
+                while end_line < len(lines) and not lines[end_line].strip().startswith(('def', 'async', '@')):
+                    end_line += 1
+
+                method_code = ''.join(lines[start_line:end_line])
 
             logging.info("Extracted method code: \n%s", method_code)
 
@@ -68,6 +80,7 @@ def get_ai_response(error_message, method_code):
             ai_response = response.json()
             ai_text = ai_response.get('choices', [{}])[0].get('text', 'No response text available')
             logging.info("AI Response Text: %s", ai_text)
+            send_slack_notification(error_message, ai_text)  # Send notification to Slack
         else:
             logging.error("Failed to get AI response. Status code: %d, Response: %s", response.status_code, response.text)
     except Exception as e:
@@ -85,6 +98,31 @@ def generate_ai_payload(error_message, method_code):
         "domain_id" : "highspot.com",
 
     }
+
+def send_slack_notification(error_message, ai_response):
+    """Send error stack trace and AI response to a Slack channel."""
+    try:
+        # Truncate the error message from the last occurrence of 'File'
+        last_file_index = error_message.rfind('File')
+        truncated_error_message = error_message[last_file_index:] if last_file_index != -1 else error_message
+
+        # Slack webhook URL
+        slack_webhook_url = "https://hooks.slack.com/services/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"
+
+        # Construct the payload
+        payload = {
+            "text": f"*Error in Application:*\n```{truncated_error_message}```\n\n*Possible AI Solution:*\n```{ai_response}"
+        }
+
+        # Send POST request to Slack webhook
+        response = requests.post(slack_webhook_url, json=payload)
+
+        if response.status_code == 200:
+            logging.info("Successfully sent notification to Slack.")
+        else:
+            logging.error("Failed to send notification to Slack. Status code: %d, Response: %s", response.status_code, response.text)
+    except Exception as e:
+        logging.error("Exception in send_slack_notification: %s", str(e))
 
 if __name__ == "__main__":
     log_file_path = "application.log"

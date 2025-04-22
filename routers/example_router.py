@@ -22,3 +22,7 @@ def trigger_divide_by_zero_error():
 @router.get("/error/conversion")
 def trigger_conversion_error():
     return ExampleService.simulate_conversion_error()
+
+@router.post("/calculate")
+def calculate_expression(payload: dict):
+    return ExampleService.calculate_expression(payload)
